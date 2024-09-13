@@ -1,14 +1,26 @@
 ## Storage Manager
 
-The goal of this program is to implement a storage manager with primary goal of reading blocks (from a file) on disk into memory and writing blocks from memory to a file on disk.
+The goal of this program is to implement a storage manager with primary goal of reading blocks from a file on disk into memory and writing blocks from memory to a file on disk.
+
+
+The storage manager should:
+- handle pages (blocks) of fixed size (PAGE SIZE)
+- create, open, and close files
+- read and write pages from a file
+- maintain several types of information for an open file, ie. 
+    - the number of total pages in the file, 
+    - the current page position (for reading and writing), 
+    - the file name, and 
+    - a POSIX file descriptor or FILE pointer. 
+- implementation you should implement the interfaces in the `storage_mgr.h` file
 
 
 ### Teammates
 CS525: Advanced Database Organization - Assignment 1 - Storage-Manager
 Group #23: Member
-- John Kwesi Erbynn (email - A20)
-- Harry (email - A20)
-- Usman (email - A20)
+- Erbynn, John Kwesi (email - A20)
+- Thirumalai Bhuvaraghavan, Sreehari (email - A20)
+- Hameed, Usman (email - A20)
 
 ## Technologies/Platforms/Tools Used 
 1. C Programming Language

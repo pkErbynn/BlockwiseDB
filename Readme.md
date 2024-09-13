@@ -1,3 +1,4 @@
-## BlockwiseDB
+# BlockwiseDB
 
-Design and implement a storage manager with primary goal of reading blocks (from a file) on disk into memory and writing blocks from memory to a file on disk.
+## Synopsis
+The goal, at the high-level, is to design and implement a disk-oriented database management system built **from scratch**, that organizes and stores data using paged files while retrieving data efficiently using buffer pool. 

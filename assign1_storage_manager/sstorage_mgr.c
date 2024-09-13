@@ -12,9 +12,9 @@ void initStorageManager(void) {
     printf("Begin Execution");
 }
 
-/**
- * Create a new page file with an initial size of one page, filled with '\0' bytes.
- */
+/*
+* Create a new page file with an initial size of one page, filled with '\0' bytes.
+*/
 RC createPageFile(char *fileName) {
     FILE *fPtr = fopen(fileName, "w"); // Open the file in write mode to create it
 
@@ -31,7 +31,7 @@ RC createPageFile(char *fileName) {
     return RC_OK;
 }
 
-/**
+/*
  * Open an existing page file. Initialize the file handle with information about the file.
  */
 RC openPageFile(char *fileName, SM_FileHandle *fHandle) {
@@ -59,7 +59,7 @@ RC openPageFile(char *fileName, SM_FileHandle *fHandle) {
     return RC_OK;
 }
 
-/**
+/*
  * Close an open page file.
  */
 RC closePageFile(SM_FileHandle *fHandle) {
