@@ -56,10 +56,10 @@ To verify memory leaks, run
 
 ## Test and Memory Leaks Results
 ### Test results
-![Scheme](images/test-result.png) 
+![Scheme](assets/test-result.png) 
 
 ### Memory leak results
-![Scheme](images/memory-leak-result.png) 
+![Scheme](assets/memory-leak-result.png) 
 
 
 ## Program Key Components

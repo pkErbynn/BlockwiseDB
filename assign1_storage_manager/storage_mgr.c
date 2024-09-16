@@ -5,7 +5,7 @@
 
 
 /************************************************************
-*  Manipulating page files implementation by Erbynn John -A20560454        
+*               Manipulating page files     
 ************************************************************/
 
 // Initialize storage manager
@@ -59,6 +59,7 @@ RC openPageFile(char *fileName, SM_FileHandle *fileHandle)
     // input validation/guard clause
     if (fileName == NULL)
         return RC_FILE_NOT_FOUND;
+
     if (fileHandle == NULL)
         return RC_FILE_HANDLE_NOT_INIT;
 
@@ -75,9 +76,9 @@ RC openPageFile(char *fileName, SM_FileHandle *fileHandle)
     fileHandle->fileName = fileName;     // initialize file handle with file information
 
     // Get current file position
-    long position = ftell(filePointer);     // get the current position of the pointer 
-    fileHandle->curPagePos = position;      // update fileHandle object
-
+    long position = ftell(filePointer);
+    fileHandle->curPagePos = position;
+    
     // Calculate total number of pages in the file
     fseek(filePointer, 0, SEEK_END);    // move pointer to the end of the file as the current position
     long fileSize = ftell(filePointer);    // get current filePointer position with is represents the current file size 
@@ -90,7 +91,7 @@ RC openPageFile(char *fileName, SM_FileHandle *fileHandle)
     return RC_OK;
 }
 
-///// Close an open page file
+// Close an open page file
 RC closePageFile(SM_FileHandle *fileHandle)
 {
     // early return if fileHandle object is invalid, before proceeding
@@ -113,11 +114,10 @@ RC closePageFile(SM_FileHandle *fileHandle)
     // Reset the filename to indicate the file is no longer associated with the handle
     fileHandle->fileName = NULL;
 
-    // Return success after successfully closing the file
     return RC_OK;
 }
 
-///// Dispose/delete a page file
+// Dispose/delete a page file
 RC destroyPageFile(char *fileName)
 {
     // Guard clause
@@ -141,7 +141,7 @@ RC destroyPageFile(char *fileName)
 
 
 /*****************************************************************************
-*    Reading blocks from disc, partially implemented by Erbynn, John       
+*                       Reading blocks from disc     
 ******************************************************************************/
 
 /**
@@ -220,7 +220,7 @@ RC readFirstBlock(SM_FileHandle *fileHandle, SM_PageHandle memoryPage)
 
 
 /*****************************************************************************
-*    Reading blocks from disc, the rest implemented by Usman Matheen - A20564338    
+*                       Reading blocks from disc 
 ******************************************************************************/
 
 /* Read the previous block in a page file */
@@ -253,7 +253,7 @@ RC readLastBlock(SM_FileHandle *filehandle, SM_PageHandle memPage)
 
 
 /*****************************************************************************
-*    Writing blocks to a page file implemented by SreeHari Thirumalai Bhuvaraghavan - A20560224  
+*                   Writing blocks to a page file 
 ******************************************************************************/
 
 RC writeBlock(int pageNumber, SM_FileHandle *fHandle, SM_PageHandle memPage)
@@ -360,7 +360,7 @@ RC ensureCapacity(int numberOfPages, SM_FileHandle *fHandle)
     }
 
     // If the file has fewer pages than required, expand its capacity
-    if (fHandle->totalNumPages < numberOfPages) // checks if the number of pages are greater than file total number of pages
+    if (fHandle->totalNumPages < numberOfPages)
     {
         int additionalPages = numberOfPages - fHandle->totalNumPages; // Calculate the number of additional pages needed
         for (int i = 0; i < additionalPages; i++)
