@@ -17,7 +17,7 @@ The storage manager should:
 
 ## Technologies/Platforms/Tools Used 
 1. C Programming Language
-2. Ubuntu OS
+2. Ubuntu OS (Powered by Parallel on MacOS)
 3. Visual Studio Code
 4. GCC Compiler
 4. Valgrind
