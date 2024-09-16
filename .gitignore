@@ -1,4 +1,4 @@
-# Ignore test result
+# Ignore test results
 test_assign1
 
 # Compiled object files
@@ -24,7 +24,7 @@ test_assign1
 *.stackdump
 
 # Generated files (e.g., by auto-tools)
-Makefile
+# Makefile
 Makefile.in
 config.h
 config.h.in
