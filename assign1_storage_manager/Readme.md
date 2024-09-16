@@ -15,13 +15,6 @@ The storage manager should:
 - implementation you should implement the interfaces in the `storage_mgr.h` file
 
 
-### Teammates
-CS525: Advanced Database Organization - Assignment 1 - Storage-Manager
-Group #23: Member
-- Erbynn, John Kwesi (email - A20)
-- Thirumalai Bhuvaraghavan, Sreehari (email - A20)
-- Hameed, Usman (email - A20)
-
 ## Technologies/Platforms/Tools Used 
 1. C Programming Language
 2. Ubuntu OS
@@ -48,7 +41,7 @@ Using the Makefile, run command below to compile the program. This will create a
 ```$ make```
 
 ## Execution
-Run the generate executable object file using the command below.
+Run the generated executable `test_assign1` object file using the command below.
 
 ```$ ./test_assign1```
 
@@ -60,6 +53,13 @@ Clean object file using the command below.
 ## Memory Leaks Verification
 To verify memory leaks, run
 ```$ valgrind --leak-check=full ./test_assign1```
+
+## Test and Memory Leaks Results
+### Test results
+![Scheme](images/test-result.png) 
+
+### Memory leak results
+![Scheme](images/memory-leak-result.png) 
 
 
 ## Program Key Components
@@ -116,9 +116,8 @@ typedef char *SM_PageHandle;
 
 ## Code Structure
 The overview of the code is primarily divided has the following sections:
+
 - File manipulation - methods to create, open, close, and delete files
 - Reading pages - methods to read first, last, next, prev pages
 - Writing pages - methods to write and append pages
 - Helper methods - for getting current page position, ensuring capacity
-
-
