@@ -10,13 +10,9 @@
 #include "dberror.h"
 
 
-///////////// Storage Manager reimplemented from prev ////////////////
-
-
-/*********************************
- *  Page File Management Module
-**********************************/
-
+/***********************************************
+ *  Page File Management Module Implementation
+ ***********************************************/
 
 void initStorageManager (void) {
 	printf("Start StorageManager Execution...");

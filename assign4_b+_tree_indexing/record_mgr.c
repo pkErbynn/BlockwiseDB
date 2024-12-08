@@ -729,7 +729,6 @@ RC startScan(RM_TableData *rel, RM_ScanHandle *scan, Expr *conditionExpression) 
 
     return RC_OK;
 }
-
 RC next(RM_ScanHandle *scan, Record *record) {
     if (scan == NULL || record == NULL || scan->mgmtData == NULL || scan->rel == NULL) {
         return RC_GENERAL_ERROR;

@@ -216,8 +216,6 @@ RC readFirstBlock(SM_FileHandle *fileHandle, SM_PageHandle memoryPage)
     return readBlock(0, fileHandle, memoryPage);
 }
 
-// End of implementation by Erbynn, John
-
 
 /*****************************************************************************
 *                       Reading blocks from disc 
