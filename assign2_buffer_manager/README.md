@@ -81,7 +81,7 @@ The folder contains the following files:
 The project uses a `Makefile` for compilation. To compile the code, simply run the following command:
 
 ```bash
-make
+$ make
 ```
 
 ---
@@ -91,15 +91,15 @@ make
 After compiling the program, the test cases be run by executing the following commands:
 
 ```bash
-./test_assign2_1
-./test_assign2_2
+$ ./test_assign2_1
+$ ./test_assign2_2
 ```
 To clean generated objects, run:
 ```bash
-make clean
+$ make clean
 ```
 
-To test specific scenarios like the **LRU** page replacement strategy, you can comment out the **FIFO** test cases in `test_assign2_1`.
+To test specific scenarios like the **LRU** page replacement strategy, I commented out the **FIFO** test cases in `test_assign2_1`.
 
 ## Test Results
 Run `./test_assign2_1` to get test results for the various replacement policies. 
@@ -126,8 +126,8 @@ Run `./test_assign2_1` to get test results for the various replacement policies.
 To verify memory leaks using `Valgrind` (on Linux), ensure `valgrind` is installed, and run the following commands:
 
 ```bash
-valgrind --leak-check=full ./test_assign2_1
-valgrind --leak-check=full ./test_assign2_2
+$ valgrind --leak-check=full ./test_assign2_1
+$ valgrind --leak-check=full ./test_assign2_2
 ```
 
 This will provide detailed information about any memory leaks or issues during execution.
@@ -185,20 +185,8 @@ The Buffer Manager performs the following core tasks:
 
 ## Optional Extensions
 
-For additional credit, you may:
+For additional credit, I may:
 
 1. **Implement Thread Safety**: Ensure the buffer pool can handle concurrent access safely.
 2. **Implement More Page Replacement Strategies**: Consider adding CLOCK or LRU-k strategies for enhanced functionality.
-
----
-
-## Debugging and Testing
-
-To ensure the buffer manager is functioning correctly, use available debugging tools to troubleshoot issues. Check for memory leaks using Valgrind, and employ proper memory management techniques to prevent errors.
-
-Refer to the **Programming Assignment: Organization** page for further debugging instructions.
-
----
-
-This documentation provides a comprehensive overview of the buffer manager implementation, its key features, and the expected outcomes of the assignment.
 

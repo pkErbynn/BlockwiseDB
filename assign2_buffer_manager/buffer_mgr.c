@@ -6,318 +6,302 @@
 #include "storage_mgr.h"
 #include "dberror.h"
 
-/************************************************************
-*  Buffer Manager Interface Pool Handling by Erbynn John -A20560454        
-************************************************************/
+/*****************************************
+*  Buffer Manager Interface Pool Handling       
+*****************************************/
 
-// Define Bufferpool
-typedef struct Bufferpool
+// Bufferpool
+typedef struct BufferPoolInfo
 {
-     int numRead;
-     int numWrite;
-     int totalPages;
-     int updatedStrategy;
-     int free_space;
-     int *updatedOrder;
-     bool *bitdirty;
-     int *fix_count;
-     int *accessTime;
-     int *pagenum;
-     char *pagedata;
-     SM_FileHandle fhl;
-}Bufferpool;
+    int writeCount;
+    int *pageFixCount;
+    int *accessTimestamps;
+    int *pageNumbers;
+    int maxPages;
+    int strategyType;
+    int readCount;
+    bool *dirtyFlags;
+    char *pageDataBuffer;
+    SM_FileHandle fileHandle;
+    int availableSlots;
+    int *accessOrder;
+}BufferPoolInfo;
 
-bool pageFound = FALSE;
+bool isPageFound = FALSE;
 
 //  static helper methods
-static RC writeDirtyPages(BM_BufferPool *const bm);
-static RC freeBufferPoolMemory(BM_BufferPool *const bm);
-static void ShiftUpdatedOrder(int start, int end, Bufferpool *bp, int newPageNum);
-static void UpdateBufferPoolStats(Bufferpool *bp, int memoryAddress, int pageNum);
+static RC writeDirtyPagesToDisk(BM_BufferPool *const bufferPool);
+static RC releaseBufferMemory(BM_BufferPool *const bufferPool);
+static void shiftAccessOrder(int startIndex, int end, BufferPoolInfo *bufferPoolData, int newPageNumber);
+static void updateBufferStats(BufferPoolInfo *bufferPoolData, int bufferIndex, int pageNumber);
 
-// Define initBufferPool
-RC initBufferPool(BM_BufferPool *const bm, const char *const pageFileName, const int numPages, ReplacementStrategy strategy, void *stratData) {
-    
-    
-    // validate parameters
-    if(bm == NULL || pageFileName == NULL) {
-        return RC_FILE_NOT_FOUND;
-    }
-
-    // if -ve number of page frames, return
-    if (numPages <= 0) {
+// Initialize the buffer pool
+RC initBufferPool(BM_BufferPool *const bufferPool, const char *const pageFileName, const int pageCount, ReplacementStrategy strategy, void *strategyData)
+{
+    if (bufferPool == NULL || pageFileName == NULL || pageCount <= 0) {
         return RC_ERROR;
     }
 
+    SM_FileHandle file;
+    BufferPoolInfo *bufferPoolInfo;
+    int status, i;
 
-    SM_FileHandle fh;
-    Bufferpool *bp;
-    int rcode, i;
-
-    // Open page file
-    rcode = openPageFile((char *)pageFileName, &fh);
-    if (rcode != RC_OK) {
-        return rcode; 
+    // Open the page file
+    status = openPageFile((char *)pageFileName, &file);
+    if (status != RC_OK) {
+        return status;
     }
 
-    // Allocate memory for the buffer pool structure
-    bp = (Bufferpool *)calloc(1, sizeof(Bufferpool));
-    if (!bp) {
-        return RC_MEMORY_ALLOCATION_FAIL; 
+    // Allocate memory for the buffer pool
+    bufferPoolInfo = (BufferPoolInfo *)calloc(1, sizeof(BufferPoolInfo));
+    if (!bufferPoolInfo) {
+        return RC_MEMORY_ALLOCATION_FAIL;
     }
 
-    // Initialize buffer pool attributes
-    bp->totalPages = numPages;
-    bp->pagedata = (char *)calloc(numPages * PAGE_SIZE, sizeof(char));
-    bp->numRead = 0;
-    bp->numWrite = 0;
-    bp->updatedOrder = (int *)calloc(numPages, sizeof(int));
-    bp->bitdirty = (bool *)calloc(numPages, sizeof(bool));
-    bp->free_space = numPages;
-    bp->fhl = fh;
-    bp->pagenum = (int *)calloc(numPages, sizeof(int));
-    bp->fix_count = (int *)calloc(numPages, sizeof(int));
-    bp->updatedStrategy = strategy;
+    bufferPoolInfo->maxPages = pageCount;
+    bufferPoolInfo->pageDataBuffer = (char *)calloc(pageCount * PAGE_SIZE, sizeof(char));
+    bufferPoolInfo->readCount = 0;
+    bufferPoolInfo->writeCount = 0;
+    bufferPoolInfo->accessOrder = (int *)calloc(pageCount, sizeof(int));
+    bufferPoolInfo->dirtyFlags = (bool *)calloc(pageCount, sizeof(bool));
+    bufferPoolInfo->availableSlots = pageCount;
+    bufferPoolInfo->fileHandle = file;
+    bufferPoolInfo->pageNumbers = (int *)calloc(pageCount, sizeof(int));
+    bufferPoolInfo->pageFixCount = (int *)calloc(pageCount, sizeof(int));
+    bufferPoolInfo->strategyType = strategy;
 
-    // Initialize buffer pool arrays
-    for (i = 0; i < numPages; i++) {
-        bp->bitdirty[i] = FALSE;
-        bp->fix_count[i] = 0;
-        bp->pagenum[i] = NO_PAGE;
-        bp->updatedOrder[i] = NO_PAGE;
+    // Initialize array values
+    for (i = 0; i < pageCount; i++) {
+        bufferPoolInfo->dirtyFlags[i] = FALSE;
+        bufferPoolInfo->pageFixCount[i] = 0;
+        bufferPoolInfo->pageNumbers[i] = NO_PAGE;
+        bufferPoolInfo->accessOrder[i] = NO_PAGE;
     }
 
-    // Initialize BM_BufferPool
-    if (bm != NULL) {
-        bm->pageFile = pageFileName ? strdup(pageFileName) : NULL;
-        bm->numPages = numPages;
-        bm->strategy = strategy;
-        bm->mgmtData = bp;
+    // Initialize BM_BufferPool structure
+    if (bufferPool != NULL) {
+        bufferPool->pageFile = pageFileName ? strdup(pageFileName) : NULL;
+        bufferPool->numPages = pageCount;
+        bufferPool->strategy = strategy;
+        bufferPool->mgmtData = bufferPoolInfo;
     }
 
     return RC_OK;
 }
 
-// Define shutdownBufferPool with validation
-RC shutdownBufferPool(BM_BufferPool *const bm) {
-    // Validate input
-    if (bm == NULL) {
+// Shut down the buffer pool
+RC shutdownBufferPool(BM_BufferPool *const bufferPool)
+{
+    if (bufferPool == NULL || bufferPool->mgmtData == NULL) {
         return RC_ERROR;
     }
-    
-    Bufferpool *bpl = bm->mgmtData;
-    
-    // Validate buffer pool data
-    if (bpl == NULL) {
-        return RC_ERROR;
-    }
-    
-    // Check if any pages are still in use (fix count != 0)
-    for (int i = 0; i < bpl->totalPages; i++) {
-        if (bpl->fix_count[i] != 0) {
+
+    BufferPoolInfo *bufferInfo = bufferPool->mgmtData;
+
+    // Check for pinned pages
+    for (int i = 0; i < bufferInfo->maxPages; i++) {
+        if (bufferInfo->pageFixCount[i] != 0) {
             return RC_BUFFERPOOL_IN_USE;
         }
     }
 
-    // Write dirty pages back to disk
-    RC rc = writeDirtyPages(bm);
-    if (rc != RC_OK) {
-        return rc;
+    // Write dirty pages to disk
+    RC status = writeDirtyPagesToDisk(bufferPool);
+    if (status != RC_OK) {
+        return status;
     }
-    
-    // Close the page file
-    rc = closePageFile(&bpl->fhl);
-    if (rc != RC_OK) {
+
+    // Close the file and release memory
+    status = closePageFile(&bufferInfo->fileHandle);
+    if (status != RC_OK) {
         return RC_CLOSE_FAILED;
     }
 
-    // Free buffer pool memory
-    freeBufferPoolMemory(bm);
+    releaseBufferMemory(bufferPool);
 
     return RC_OK;
 }
 
 
-// Helper function
-static RC writeDirtyPages(BM_BufferPool *const bm) {
-    Bufferpool *bpl = bm->mgmtData;
 
-    for (int j = 0; j < bpl->totalPages; j++) {
-        if (bpl->bitdirty[j]) {
-            int record_pointer = j * PAGE_SIZE;
-            // Ensure capacity before writing
-            RC rc = ensureCapacity(bpl->pagenum[j] + 1, &bpl->fhl);
-            if (rc != RC_OK) {
-                return rc;
+// Helper function to write dirty pages to disk
+static RC writeDirtyPagesToDisk(BM_BufferPool *const bufferPool) {
+    BufferPoolInfo *bufferInfo = bufferPool->mgmtData;
+    for (int i = 0; i < bufferInfo->maxPages; i++) {
+        if (bufferInfo->dirtyFlags[i]) {
+            int offset = i * PAGE_SIZE;
+            
+            // Ensure the file has sufficient capacity before writing
+            RC status = ensureCapacity(bufferInfo->pageNumbers[i] + 1, &bufferInfo->fileHandle);
+            if (status != RC_OK) {
+                return status;
             }
-            // Write block
-            rc = writeBlock(bpl->pagenum[j], &bpl->fhl, (bpl->pagedata + record_pointer));
-            if (rc != RC_OK) {
+
+            // Write the page to disk
+            status = writeBlock(bufferInfo->pageNumbers[i], &bufferInfo->fileHandle, bufferInfo->pageDataBuffer + offset);
+            if (status != RC_OK) {
                 return RC_WRITE_FAILED;
             }
-            bpl->numWrite++;
+
+            bufferInfo->writeCount++;
         }
     }
     return RC_OK;
 }
 
-// Helper method to free buffer pool memory
-static RC freeBufferPoolMemory(BM_BufferPool *const bm) {
-    // Validate input
-    if (bm == NULL || bm->mgmtData == NULL) {
+
+
+// Helper function to free all allocated buffer memory
+static RC releaseBufferMemory(BM_BufferPool *const bufferPool) {
+    if (bufferPool == NULL || bufferPool->mgmtData == NULL) {
         return RC_ERROR;
     }
 
-    Bufferpool *bpl = bm->mgmtData;
+    BufferPoolInfo *bufferInfo = bufferPool->mgmtData;
 
-    // Free and set to NULL for each allocated buffer pool resource
-    if (bpl->updatedOrder != NULL) {
-        free(bpl->updatedOrder);
-        bpl->updatedOrder = NULL;
+    // Free and reset memory allocations
+    if (bufferInfo->accessOrder) {
+        free(bufferInfo->accessOrder);
+        bufferInfo->accessOrder = NULL;
     }
-    if (bpl->pagenum != NULL) {
-        free(bpl->pagenum);
-        bpl->pagenum = NULL;
+    if (bufferInfo->pageNumbers) {
+        free(bufferInfo->pageNumbers);
+        bufferInfo->pageNumbers = NULL;
     }
-    if (bpl->bitdirty != NULL) {
-        free(bpl->bitdirty);
-        bpl->bitdirty = NULL;
+    if (bufferInfo->dirtyFlags) {
+        free(bufferInfo->dirtyFlags);
+        bufferInfo->dirtyFlags = NULL;
     }
-    if (bpl->fix_count != NULL) {
-        free(bpl->fix_count);
-        bpl->fix_count = NULL;
+    if (bufferInfo->pageFixCount) {
+        free(bufferInfo->pageFixCount);
+        bufferInfo->pageFixCount = NULL;
     }
-    if (bpl->pagedata != NULL) {
-        free(bpl->pagedata);
-        bpl->pagedata = NULL;
+    if (bufferInfo->pageDataBuffer) {
+        free(bufferInfo->pageDataBuffer);
+        bufferInfo->pageDataBuffer = NULL;
     }
 
-    // Free the Bufferpool struct and set mgmtData to NULL
-    free(bpl);
-    bm->mgmtData = NULL;
+    // Free the BufferPoolInfo structure itself
+    free(bufferInfo);
+    bufferPool->mgmtData = NULL;
 
     return RC_OK;
 }
 
-// Helper function to ensure file size matches required size
+// Helper to ensure file size matches required buffer capacity
 static RC ensureFileSize(FILE *file, long requiredSize) {
     fseek(file, 0, SEEK_END);
-    long fileSize = ftell(file);
+    long currentSize = ftell(file);
     
-    if (fileSize < requiredSize) {
+    if (currentSize < requiredSize) {
         fseek(file, requiredSize - 1, SEEK_SET);
         fputc('\0', file);
     }
     return RC_OK;
 }
 
-// Define flush the buffer pool
-RC forceFlushPool(BM_BufferPool *const bm) {
-    if (bm == NULL || bm->mgmtData == NULL) {
+
+// Function to force flushing the buffer pool to disk
+RC forceFlushPool(BM_BufferPool *const bufferPool) {
+    if (bufferPool == NULL || bufferPool->mgmtData == NULL) {
         return RC_ERROR;
     }
 
-    Bufferpool *bpl = bm->mgmtData;
-    RC rcode = RC_OK;
+    BufferPoolInfo *bufferInfo = bufferPool->mgmtData;
+    RC status = RC_OK;
 
-    for (int i = 0; i < bpl->totalPages; i++) {
-        // Check if the page is dirty and has no active users (fix count == 0)
-        if (bpl->fix_count[i] == 0 && bpl->bitdirty[i] == TRUE) {
-            FILE *file = fopen(bpl->fhl.fileName, "r+");
-            
-            if (file == NULL) {
+    for (int i = 0; i < bufferInfo->maxPages; i++) {
+        // Flush pages that are dirty and not currently pinned
+        if (bufferInfo->pageFixCount[i] == 0 && bufferInfo->dirtyFlags[i]) {
+            FILE *file = fopen(bufferInfo->fileHandle.fileName, "r+");
+            if (!file) {
                 return RC_WRITE_FAILED;
             }
 
             // Ensure the file is large enough for the page
-            long requiredSize = (bpl->pagenum[i] + 1) * PAGE_SIZE;
+            long requiredSize = (bufferInfo->pageNumbers[i] + 1) * PAGE_SIZE;
             ensureFileSize(file, requiredSize);
 
-            // Write the page data to the file
-            int recordPointer = i * PAGE_SIZE;
-            fseek(file, bpl->pagenum[i] * PAGE_SIZE, SEEK_SET);
-            
-            if (fwrite(bpl->pagedata + recordPointer, sizeof(char), PAGE_SIZE, file) != PAGE_SIZE) {
+            // Write page data to the file
+            int offset = i * PAGE_SIZE;
+            fseek(file, bufferInfo->pageNumbers[i] * PAGE_SIZE, SEEK_SET);
+            if (fwrite(bufferInfo->pageDataBuffer + offset, sizeof(char), PAGE_SIZE, file) != PAGE_SIZE) {
                 fclose(file);
                 return RC_WRITE_FAILED;
             }
 
-            // Close the file after writing
             fclose(file);
-
-            // Mark the page as clean (no longer dirty)
-            bpl->bitdirty[i] = FALSE;
-            bpl->numWrite++;
+            bufferInfo->dirtyFlags[i] = FALSE;
+            bufferInfo->writeCount++;
         }
     }
 
-    return rcode;
+    return status;
 }
 
 
-static void ShiftUpdatedOrder(int start, int end, Bufferpool *bp, int newPageNum) {
-    for (int i = start; i < end; i++) {
-        bp->updatedOrder[i] = bp->updatedOrder[i + 1];
+// Function to update the order of recently used pages
+static void shiftAccessOrder(int startIndex, int endIndex, BufferPoolInfo *bufferInfo, int newPageNumber) {
+    for (int i = startIndex; i < endIndex; i++) {
+        bufferInfo->accessOrder[i] = bufferInfo->accessOrder[i + 1];
     }
-
-    bp->updatedOrder[end] = newPageNum;
+    bufferInfo->accessOrder[endIndex] = newPageNumber;
 }
 
-static void UpdateBufferPoolStats(Bufferpool *bp, int memoryAddress, int pageNum) {
-    bp->pagenum[memoryAddress] = pageNum;
-    bp->numRead += 1;
-    bp->fix_count[memoryAddress] += 1;
-    bp->bitdirty[memoryAddress] = FALSE;
+// Function to update buffer statistics
+static void updateBufferStats(BufferPoolInfo *bufferInfo, int bufferIndex, int pageNumber) {
+    bufferInfo->pageNumbers[bufferIndex] = pageNumber;
+    bufferInfo->readCount++;
+    bufferInfo->pageFixCount[bufferIndex]++;
+    bufferInfo->dirtyFlags[bufferIndex] = FALSE;
 }
 
+/******************************************
+*  Buffer Manager Interface Access Pages 
+******************************************/
 
-/************************************************************
-*  Buffer Manager Interface Access Pages by Sreehari Thirumalai Bhuvaraghavan - A20560224
-************************************************************/
-
-// Define mark a page dirty
-RC markDirty(BM_BufferPool *const bm, BM_PageHandle *const page) {
+// Mark a page as dirty in the buffer pool
+RC markDirty(BM_BufferPool *const bufferPool, BM_PageHandle *const page) {
     // Check if buffer manager or management data is null
-    if (bm == NULL || bm->mgmtData == NULL) {
+    if (bufferPool == NULL || bufferPool->mgmtData == NULL) {
         return RC_FILE_HANDLE_NOT_INIT;
     }
 
-    Bufferpool *bpl = bm->mgmtData;
+    BufferPoolInfo *bufferInfo = bufferPool->mgmtData;
 
-    // Iterate through pages to find the matching page number
-    for (int i = 0; i < bpl->totalPages; i++) {
-        if (bpl->pagenum[i] == page->pageNum) {
-            // Mark the page dirty if it's not already marked
-            if (!bpl->bitdirty[i]) {
-                bpl->bitdirty[i] = TRUE;
+    // Search for the specified page number in the buffer
+    for (int i = 0; i < bufferInfo->maxPages; i++) {
+        if (bufferInfo->pageNumbers[i] == page->pageNum) {
+            // Set the dirty flag to TRUE if not already set
+            if (!bufferInfo->dirtyFlags[i]) {
+                bufferInfo->dirtyFlags[i] = TRUE;
             }
-            break; // Exit after marking the page dirty
+            break; // Exit once the page is marked dirty
         }
     }
 
     return RC_OK;
 }
 
-
-// Define force a page
-RC forcePage(BM_BufferPool *const bm, BM_PageHandle *const page) {
+// Force a page to be written to disk from the buffer pool
+RC forcePage(BM_BufferPool *const bufferPool, BM_PageHandle *const page) {
     // Check if buffer manager or management data is null
-    if (bm == NULL || bm->mgmtData == NULL) {
+    if (bufferPool == NULL || bufferPool->mgmtData == NULL) {
         return RC_FILE_HANDLE_NOT_INIT;
     }
 
-    Bufferpool *bpl = bm->mgmtData;
+    BufferPoolInfo *bufferInfo = bufferPool->mgmtData;
     bool pageFound = FALSE;
 
-    // Iterate through the pages in the buffer pool to find the matching page
-    for (int i = 0; i < bpl->totalPages; i++) {
-        if (bpl->pagenum[i] == page->pageNum) {
-            int record_pointer = i * PAGE_SIZE;
-            printf("Simulated writing of page %d to disk at position %d.\n", page->pageNum, record_pointer);
+    // Search for the specified page in the buffer pool
+    for (int i = 0; i < bufferInfo->maxPages; i++) {
+        if (bufferInfo->pageNumbers[i] == page->pageNum) {
+            int offset = i * PAGE_SIZE;
+            printf("Simulated writing of page %d to disk at offset %d.\n", page->pageNum, offset);
 
-            // Mark the page as clean and increment the number of write operations
-            bpl->bitdirty[i] = FALSE;
-            bpl->numWrite++;
+            // Mark the page as clean and increment the write count
+            bufferInfo->dirtyFlags[i] = FALSE;
+            bufferInfo->writeCount++;
 
             pageFound = TRUE;
             break;
@@ -325,40 +309,38 @@ RC forcePage(BM_BufferPool *const bm, BM_PageHandle *const page) {
     }
 
     // Return success if the page was found and written, otherwise return failure
-    if (pageFound) {
-        return RC_OK;
-    } else {
-        printf("Page %d not found in buffer pool.\n", page->pageNum);
-        return RC_WRITE_FAILED;
-    }
+    return pageFound ? RC_OK : RC_WRITE_FAILED;
 }
 
-// Define unpin a page
-RC unpinPage(BM_BufferPool *const bm, BM_PageHandle *const page) {
+
+// Unpin a page in the buffer pool
+RC unpinPage(BM_BufferPool *const bufferPool, BM_PageHandle *const page) {
     // Check if buffer manager or management data is null
-    if (bm == NULL || bm->mgmtData == NULL) {
+    if (bufferPool == NULL || bufferPool->mgmtData == NULL) {
         return RC_FILE_HANDLE_NOT_INIT;
     }
 
-    Bufferpool *bufferPool = bm->mgmtData;
+    BufferPoolInfo *bufferInfo = bufferPool->mgmtData;
 
-    // Search for the page in the buffer pool
-    for (int i = 0; i < bufferPool->totalPages; i++) {
-        if (bufferPool->pagenum[i] == page->pageNum) {
-            // Decrease the fix count if it's greater than 0
-            if (bufferPool->fix_count[i] > 0) {
-                bufferPool->fix_count[i]--;
+    // Search for the specified page in the buffer pool
+    for (int i = 0; i < bufferInfo->maxPages; i++) {
+        if (bufferInfo->pageNumbers[i] == page->pageNum) {
+            // Decrease the fix count if it is greater than 0
+            if (bufferInfo->pageFixCount[i] > 0) {
+                bufferInfo->pageFixCount[i]--;
             }
-            return RC_OK; // Return after unpinning the page
+            return RC_OK; // Page found and unpinned successfully
         }
     }
 
-    return RC_OK; // If the page wasn't found, return OK (same behavior as the original)
+    // If the page wasn't found in the buffer, return OK (consistent behavior)
+    return RC_OK;
 }
 
-// Define  pin a page 
+
+// Pin a page in the buffer pool
 RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page, const PageNumber pageNum){
-    Bufferpool *buffer_pool;
+    BufferPoolInfo *buffer_pool;
     bool void_page=FALSE;
     bool foundedPage=FALSE;
     bool UpdatedStra_found=FALSE;
@@ -371,69 +353,63 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page, const PageNumber
     buffer_pool=bm->mgmtData;
     buffer_pool = bm->mgmtData;
     
-    void_page = (buffer_pool->free_space == buffer_pool->totalPages) ? TRUE : void_page;
+    void_page = (buffer_pool->availableSlots == buffer_pool->maxPages) ? TRUE : void_page;
     if (!void_page) {
+        int totalPages = buffer_pool->maxPages - buffer_pool->availableSlots;
 
-        int totalPages = buffer_pool->totalPages - buffer_pool->free_space;
-        
         for (int i = 0; i < totalPages; i++) {
 
-            if (buffer_pool->pagenum[i] == pageNum) {
+            if (buffer_pool->pageNumbers[i] == pageNum) {
                 page->pageNum = pageNum;
                 int memory_address = i;
-                buffer_pool->fix_count[memory_address]++;
-                page->data = &buffer_pool->pagedata[memory_address * PAGE_SIZE];
+                buffer_pool->pageFixCount[memory_address]++;
+                page->data = &buffer_pool->pageDataBuffer[memory_address * PAGE_SIZE];
                 foundedPage = TRUE;
 
-                if (buffer_pool->updatedStrategy == RS_LRU) {
-                    int lastPosition = buffer_pool->totalPages - buffer_pool->free_space - 1; 
-                    swap_location = -1; 
-
-                    for (int j = 0; j <= lastPosition; j++) 
-                        if (buffer_pool->updatedOrder[j] != pageNum) {
-                            if (j == buffer_pool->totalPages - 1) {
-                                swap_location = -1;
+                if (buffer_pool->strategyType == RS_LRU) {
+                        int lastPosition = buffer_pool->maxPages - buffer_pool->availableSlots - 1; 
+                        swap_location = -1; 
+                        for (int j = 0; j <= lastPosition; j++) 
+                            if (buffer_pool->accessOrder[j] != pageNum) {
+                                if (j == buffer_pool->maxPages - 1) {
+                                    swap_location = -1;
+                                }
+                            } 
+                            else {
+                                swap_location = j;
+                                break;
                             }
-                            } else {
-                            swap_location = j;
-                            break;
-                        }
-                        if (swap_location != -1) {
-                            memmove(&buffer_pool->updatedOrder[swap_location], &buffer_pool->updatedOrder[swap_location + 1], (lastPosition - swap_location) * sizeof(buffer_pool->updatedOrder[0]));
-                            buffer_pool->updatedOrder[lastPosition] = pageNum;
-                        }
+                            if (swap_location != -1) {
+                                memmove(&buffer_pool->accessOrder[swap_location], &buffer_pool->accessOrder[swap_location + 1], (lastPosition - swap_location) * sizeof(buffer_pool->accessOrder[0]));
+                                buffer_pool->accessOrder[lastPosition] = pageNum;
+                            }
                 }
                 else {
-                    int unutilized = 0;
-                    do {
-                        printf("This loop executes exactly once.\n");
-                    } 
-                    while (++unutilized < 1);
+                        int unutilized = 0;
+                        do {
+                            //printf("This loop executes exactly once.\n");
+                        } while (++unutilized < 1);
                 }
-                
                 return RC_OK;
             }
         }
     } 
 
     if ((void_page == TRUE && buffer_pool != NULL && (1 == 1)) || 
-    ((foundedPage != TRUE && foundedPage == FALSE) && 
-    buffer_pool->free_space > 0 && 
-    buffer_pool->free_space <= buffer_pool->totalPages && buffer_pool->free_space == buffer_pool->free_space && 
-    (buffer_pool->free_space != -1 && buffer_pool->totalPages != -1) && 
-    (buffer_pool->free_space >= 0 && buffer_pool->totalPages >= buffer_pool->free_space) && 
-    ((buffer_pool->free_space + 1) > 1) && ((buffer_pool->totalPages - buffer_pool->free_space) >= 0) )
-    )
+    ((foundedPage != TRUE && foundedPage == FALSE) && buffer_pool->availableSlots > 0 && 
+    buffer_pool->availableSlots <= buffer_pool->maxPages && buffer_pool->availableSlots == buffer_pool->availableSlots && 
+    (buffer_pool->availableSlots != -1 && buffer_pool->maxPages != -1) && 
+    (buffer_pool->availableSlots >= 0 && buffer_pool->maxPages >= buffer_pool->availableSlots) && 
+    ((buffer_pool->availableSlots + 1) > 1) && ((buffer_pool->maxPages - buffer_pool->availableSlots) >= 0)))
     {
         page_handle = (SM_PageHandle)calloc(1, PAGE_SIZE);
         if (page_handle != NULL) {
 
-            read_code = readBlock(pageNum, &buffer_pool->fhl, page_handle);
+            read_code = readBlock(pageNum, &buffer_pool->fileHandle, page_handle);
             if (read_code >= 0) {
-                size_t total_used_pages = buffer_pool->totalPages - buffer_pool->free_space;
+                size_t total_used_pages = buffer_pool->maxPages - buffer_pool->availableSlots;
                 memory_address = total_used_pages;
-                
-                if (memory_address >= 0 && memory_address <= buffer_pool->totalPages) {
+                if (memory_address >= 0 && memory_address <= buffer_pool->maxPages) {
                     size_t base_address = 0; 
                     record_pointer = (memory_address * PAGE_SIZE) + base_address;
 
@@ -441,56 +417,59 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page, const PageNumber
             } 
         }
         
-        memcpy(buffer_pool->pagedata + record_pointer, page_handle, PAGE_SIZE);
-        buffer_pool->free_space--;
-        buffer_pool->updatedOrder[memory_address] = pageNum;
-        buffer_pool->pagenum[memory_address] = pageNum;
-        buffer_pool->numRead++;
-        buffer_pool->fix_count[memory_address]++;
-        buffer_pool->bitdirty[memory_address] = FALSE;
+        memcpy(buffer_pool->pageDataBuffer + record_pointer, page_handle, PAGE_SIZE);
+        buffer_pool->availableSlots--;
+        buffer_pool->accessOrder[memory_address] = pageNum;
+        buffer_pool->pageNumbers[memory_address] = pageNum;
+        buffer_pool->readCount++;
+        buffer_pool->pageFixCount[memory_address]++;
+        buffer_pool->dirtyFlags[memory_address] = FALSE;
         page->pageNum = pageNum;
-        page->data = &(buffer_pool->pagedata[record_pointer]);
+        page->data = &(buffer_pool->pageDataBuffer[record_pointer]);
+
         free(page_handle);
 
         return RC_OK;
     }
-       
+    
     bool isPageNotFound = !foundedPage;
     bool isBufferPoolValid = buffer_pool != NULL;
-    bool isBufferPoolFull = buffer_pool->free_space == 0;
+    bool isBufferPoolFull = buffer_pool->availableSlots == 0;
 
     if (isPageNotFound && isBufferPoolValid && isBufferPoolFull)
     {
         UpdatedStra_found = FALSE;
         page_handle = (SM_PageHandle) malloc(PAGE_SIZE);
+
         if (page_handle != NULL) {
             memset(page_handle, 0, PAGE_SIZE);
         }
-        read_code = readBlock(pageNum, &buffer_pool->fhl, page_handle);
+        read_code = readBlock(pageNum, &buffer_pool->fileHandle, page_handle);
 
-        if (buffer_pool->updatedStrategy == RS_FIFO || buffer_pool->updatedStrategy == RS_LRU) {
+
+        if (buffer_pool->strategyType == RS_FIFO || buffer_pool->strategyType == RS_LRU) {
             int i = 0, j = 0;
             do {
-                int swap_page = buffer_pool->updatedOrder[j];
+                int swap_page = buffer_pool->accessOrder[j];
                 i = 0; 
                 do {
-                    if (buffer_pool->pagenum[i] == swap_page && buffer_pool->fix_count[i] == 0) {
+                    if (buffer_pool->pageNumbers[i] == swap_page && buffer_pool->pageFixCount[i] == 0) {
                         memory_address = i;
                         record_pointer = i * PAGE_SIZE;
-                        if (buffer_pool->bitdirty[i]) {
-                            read_code = ensureCapacity(buffer_pool->pagenum[i] + 1, &buffer_pool->fhl);
-                            read_code = writeBlock(buffer_pool->pagenum[i], &buffer_pool->fhl, buffer_pool->pagedata + record_pointer);
-                            buffer_pool->numWrite++;
+                        if (buffer_pool->dirtyFlags[i]) {
+                            read_code = ensureCapacity(buffer_pool->pageNumbers[i] + 1, &buffer_pool->fileHandle);
+                            read_code = writeBlock(buffer_pool->pageNumbers[i], &buffer_pool->fileHandle, buffer_pool->pageDataBuffer + record_pointer);
+                            buffer_pool->writeCount++;
                         }
                         swap_location = j;
                         UpdatedStra_found = TRUE;
                         break; 
                     }
                     i++;
-                } while (i < buffer_pool->totalPages && !UpdatedStra_found);
+                } while (i < buffer_pool->maxPages && !UpdatedStra_found);
                 j++;
                 if (UpdatedStra_found) break; 
-            } while (j < buffer_pool->totalPages);
+            } while (j < buffer_pool->maxPages);
         }
     }
 
@@ -504,99 +483,99 @@ RC pinPage (BM_BufferPool *const bm, BM_PageHandle *const page, const PageNumber
     int i = 0;
     if (i < PAGE_SIZE) {
         do {
-            buffer_pool->pagedata[i + record_pointer] = page_handle[i];
+            buffer_pool->pageDataBuffer[i + record_pointer] = page_handle[i];
             i++;
         } while (i < PAGE_SIZE);
     }
             
     // primary logic
-    if (buffer_pool->updatedStrategy == RS_LRU || buffer_pool->updatedStrategy == RS_FIFO) {
-        ShiftUpdatedOrder(swap_location, buffer_pool->totalPages - 1, buffer_pool, pageNum);
-    }
+    if (buffer_pool->strategyType == RS_LRU || buffer_pool->strategyType == RS_FIFO) {
+        shiftAccessOrder(swap_location, buffer_pool->maxPages - 1, buffer_pool, pageNum);
+    } 
+    updateBufferStats(buffer_pool, memory_address, pageNum);
 
-    UpdateBufferPoolStats(buffer_pool, memory_address, pageNum);
     page->pageNum = pageNum;
-    page->data = buffer_pool->pagedata + record_pointer;
+    page->data = buffer_pool->pageDataBuffer + record_pointer;
     free(page_handle);
 
     return RC_OK; 
 }
 
 
-/******************************
-*  Statistics Interface     
-*******************************/
+/****************************
+*  Statistics Interface   
+****************************/
 
 // Define the page numbers as an array
-PageNumber *getFrameContents(BM_BufferPool *const bm)
+PageNumber *getFrameContents(BM_BufferPool *const bufferPool)
 {
     // Access the buffer pool management data
-    Bufferpool *bpl = bm->mgmtData;
+    BufferPoolInfo *bufferInfo = bufferPool->mgmtData;
 
-    // Check if the buffer pool is full
-    if (bpl->free_space == bpl->totalPages) {
+    // Check if the buffer pool is entirely empty
+    if (bufferInfo->availableSlots == bufferInfo->maxPages) {
+        return NULL; // Return NULL if no pages are currently loaded
+    }
+
+    // Return the array of page numbers currently in the buffer frames
+    return bufferInfo->pageNumbers;
+}
+
+// Retrieve an array of dirty page flags for each frame
+bool *getDirtyFlags(BM_BufferPool *const bufferPool) {
+    // Validate buffer manager and data
+    if (bufferPool == NULL || bufferPool->mgmtData == NULL) {
         return NULL;
     }
 
-    // Return the page numbers array
-    return bpl->pagenum;
+    BufferPoolInfo *bufferData = bufferPool->mgmtData;
+    return bufferData->dirtyFlags;
 }
 
-// Define array of dirty page flags
-bool *getDirtyFlags(BM_BufferPool *const bm) {
-    // Check for invalid buffer manager or management data
-    if (bm == NULL || bm->mgmtData == NULL) {
-        return NULL;
-    }
-
-    // Access the dirty flags directly from the buffer pool management data
-    Bufferpool *bpl = bm->mgmtData;
-    return bpl->bitdirty;
-}
-
-// Define the number of pages that have been read
-int getNumReadIO(BM_BufferPool *const bm) {
-    // Check if buffer manager or management data is null
-    if (bm == NULL || bm->mgmtData == NULL) {
+// Retrieve the number of pages that have been read
+int getNumReadIO(BM_BufferPool *const bufferPool) {
+    // Check if the buffer manager or management data is null
+    if (bufferPool == NULL || bufferPool->mgmtData == NULL) {
         return 0;
     }
 
     // Access the number of reads from the buffer pool management data
-    Bufferpool *bpl = bm->mgmtData;
-    return bpl->numRead;
+    BufferPoolInfo *bufferInfo = bufferPool->mgmtData;
+    return bufferInfo->readCount;
 }
 
-// Define the number of pages written
-int getNumWriteIO(BM_BufferPool *const bm) {
-    // Check if buffer manager or management data is null
-    if (bm == NULL || bm->mgmtData == NULL) {
+// Retrieve the number of pages that have been written to disk
+int getNumWriteIO(BM_BufferPool *const bufferPool) {
+    // Check if the buffer manager or management data is null
+    if (bufferPool == NULL || bufferPool->mgmtData == NULL) {
         return 0;
     }
 
     // Access the number of writes from the buffer pool management data
-    Bufferpool *bpl = bm->mgmtData;
-    return bpl->numWrite;
+    BufferPoolInfo *bufferInfo = bufferPool->mgmtData;
+    return bufferInfo->writeCount;
 }
 
-// Define fixed counts of the pages
-int *getFixCounts(BM_BufferPool *const bm) {
-    // Check if buffer manager or management data is null
-    if (bm == NULL || bm->mgmtData == NULL) {
-        printf("Buffer pool pointer or management data is null.\n");
+// Retrieve the fix counts for each page in the buffer pool
+int *getFixCounts(BM_BufferPool *const bufferPool) {
+    // Validate the buffer manager and management data
+    if (bufferPool == NULL || bufferPool->mgmtData == NULL) {
+        printf("Buffer pool or management data is missing.\n");
         return NULL;
     }
 
-    Bufferpool *bpl = bm->mgmtData;
+    BufferPoolInfo *bufferInfo = bufferPool->mgmtData;
 
-    // Check if all pages are available (no fixes)
-    if (bpl->free_space == bpl->totalPages) {
+    // Check if no pages are currently pinned (all slots are available)
+    if (bufferInfo->availableSlots == bufferInfo->maxPages) {
         static int noFixes = 0;
-        printf("All pages are available. No fixes are present.\n");
+        printf("No pages are currently pinned in the buffer.\n");
         return &noFixes;
     }
 
-    // Return fix counts for pages in use
-    printf("Returning fix counts for pages in use.\n");
-    return bpl->fix_count;
+    // Return the array of fix counts for pages in the buffer
+    printf("Returning fix counts for pages currently in use.\n");
+    return bufferInfo->pageFixCount;
 }
+
 
